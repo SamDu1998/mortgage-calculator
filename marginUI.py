@@ -35,7 +35,6 @@ def calculate_mortgage(event=None):
         cpf_pmt = float(entry_cpf_pmt.get())
         rate = float(entry_rate.get())
         dp_ratio = float(entry_dp_ratio.get())
-        extra_pmt = float(entry_extra_pmt.get() or 0)
 
         mode = mode_var.get()
 
@@ -46,7 +45,7 @@ def calculate_mortgage(event=None):
 
         # --- 自动计算20年完美卡点的房价（gap≈0，一分不剩） ---
         target_price, target_gap = find_perfect_house_price(
-            income, expenses, cpf_pmt, rate, dp_ratio, extra_pmt, target_years=20
+            income, expenses, cpf_pmt, rate, dp_ratio, target_years=20
         )
 
         if target_price is not None:
@@ -87,10 +86,10 @@ def calculate_mortgage(event=None):
         for years in loan_years_list:
             if mode == "按月供":
                 r = calc_by_monthly_payment(income, expenses, cash_pmt, cpf_pmt,
-                                            rate, dp_ratio, years, extra_pmt)
+                                            rate, dp_ratio, years)
             else:
                 r = calc_by_house_price(income, expenses, house_price_for_calc,
-                                        rate, dp_ratio, years, cpf_pmt, extra_pmt)
+                                        rate, dp_ratio, years, cpf_pmt)
 
             tree.insert("", tk.END, values=(
                 f"{years} 年",
@@ -131,11 +130,11 @@ rb2.grid(row=0, column=8, sticky="w")
 
 # 参数输入字段
 labels = ["税后月薪 (元):", "日常开销 (元/月):", "公积金月供 (元):", "综合利率 (%):",
-          "首付比例 (%):", "现金月供 (元):", "目标房价 (万):", "额外月供 (元):"]
-default_values = ["15500", "5000", "5000", "3.0", "30", "2000", "100", "0"]
+          "首付比例 (%):", "现金月供 (元):", "目标房价 (万):"]
+default_values = ["15500", "5000", "5000", "3.0", "30", "2000", "100"]
 entries = []
 
-for i in range(8):
+for i in range(7):
     row = (i + 1) // 3
     col = (i % 3) * 2
     ttk.Label(frame_inputs, text=labels[i]).grid(row=row, column=col, sticky="e", padx=(10, 2), pady=5)
@@ -145,7 +144,7 @@ for i in range(8):
     entries.append(entry)
 
 (entry_income, entry_expenses, entry_cpf_pmt, entry_rate,
- entry_dp_ratio, entry_cash_pmt, entry_house_price, entry_extra_pmt) = entries
+ entry_dp_ratio, entry_cash_pmt, entry_house_price) = entries
 
 for entry in entries:
     entry.bind("<KeyRelease>", calculate_mortgage)
