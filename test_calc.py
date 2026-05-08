@@ -296,6 +296,28 @@ class TestHousePriceModeCPF:
         r = calc_by_house_price(15000, 5000, 1_000_000, 3.0, 30, 30, cpf_pmt=0)
         assert abs(r['raw_savings'] - (15000 - 5000 - r['total_pmt'])) < TIGHT
 
+    def test_short_term_high_payment_fails(self):
+        """短年限月供过高，即使公积金覆盖部分也不够 → 失败"""
+        # 300万房价，30%首付 → 210万贷款，10年期，月供≈20393
+        # 收入15500，开销5000，可用=10500，公积金5000
+        # 总月供20393 > 公积金5000+可用10500=15500 → 失败
+        r = calc_by_house_price(15500, 5000, 3_000_000, 3.0, 30, 10, cpf_pmt=5000)
+        assert r['tag'] == 'fail'
+        assert '月供超出收入' in r['status']
+
+    def test_short_term_affordable_with_high_cpf(self):
+        """短年限但公积金足够覆盖月供 → 可行"""
+        # 100万房价，30%首付 → 70万贷款，10年期，月供≈6768
+        # 公积金8000 > 月供6768 → 全额公积金覆盖，现金月供=0
+        r = calc_by_house_price(15500, 5000, 1_000_000, 3.0, 30, 10, cpf_pmt=8000)
+        assert r['tag'] != 'fail' or '月供超出收入' not in r['status']
+
+    def test_cpf_exactly_covers_payment(self):
+        """公积金刚好覆盖月供 → 现金月供=0，闲钱=收入-开销"""
+        r = calc_by_house_price(15500, 5000, 1_000_000, 3.0, 30, 30, cpf_pmt=2952)
+        # total_pmt ≈ 2952, cpf = 2952 → cash_pmt ≈ 0
+        assert r['raw_savings'] == 15500 - 5000
+
 
 # ═══════════════════════════════════════════════════════════════
 # 七、完美卡点反推房价

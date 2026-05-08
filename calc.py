@@ -176,6 +176,23 @@ def calc_by_monthly_payment(income, expenses, cash_pmt, cpf_pmt, rate, dp_ratio,
     return result
 
 
+def _make_fail_result(years, house_price, loan_amount, total_pmt, status, remark):
+    """构造失败结果 dict，gap=-1 保证二分搜索单调性"""
+    return {
+        'years': years,
+        'house_price': house_price,
+        'loan_amount': loan_amount,
+        'total_pmt': total_pmt,
+        'remaining_principal': 0,
+        'raw_savings': 0,
+        'savings_target': 0,
+        'gap': -1,
+        'status': status,
+        'remark': remark,
+        'tag': 'fail',
+    }
+
+
 def calc_by_house_price(income, expenses, house_price, rate, dp_ratio,
                         years, cpf_pmt=0, target_years=10):
     """

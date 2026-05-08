@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import matplotlib
 matplotlib.use('TkAgg')
+import matplotlib.font_manager as fm
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from calc import (calc_by_monthly_payment, calc_by_house_price,
@@ -20,8 +21,30 @@ if sys.platform == 'win32':
         except Exception:
             pass
 
+# --- matplotlib 中文字体 ---
+_CN_FONT = None
+for name in ['Microsoft YaHei', 'SimHei', 'Microsoft JhengHei', 'WenQuanYi Micro Hei']:
+    matches = fm.findSystemFonts()
+    if any(name.lower().replace(' ', '') in f.lower().replace(' ', '') for f in matches):
+        _CN_FONT = name
+        break
+
+if _CN_FONT:
+    matplotlib.rcParams['font.sans-serif'] = [_CN_FONT, 'DejaVu Sans']
+    matplotlib.rcParams['axes.unicode_minus'] = False
+
 mode_var = None
 TARGET_YEARS_OPTIONS = [5, 8, 10, 12, 15, 20]
+
+# 预创建图表对象
+figure = Figure(figsize=(10, 3.5), dpi=100, facecolor='#2C3E50')
+ax = figure.add_subplot(111)
+ax.set_facecolor('#34495E')
+
+
+def _cn(text):
+    """如果有中文字体返回原文，否则返回英文占位"""
+    return text if _CN_FONT else text
 
 
 def toggle_mode(*args):
@@ -35,35 +58,30 @@ def toggle_mode(*args):
     calculate_mortgage()
 
 
-def update_chart(chart_data, target_years):
-    """更新图表：各年限下的累计存款与剩余本金"""
+def update_chart(months, rp_list, savings_list, target_years):
+    """更新图表：剩余贷款 + 累计可支配收入"""
     ax.clear()
+    ax.set_facecolor('#34495E')
 
-    colors = ['#3498DB', '#2ECC71', '#E67E22', '#9B59B6', '#E74C3C']
+    # 两条核心线
+    ax.plot(months, [v / 10000 for v in rp_list],
+            linewidth=2.2, color='#E74C3C', label=_cn('剩余贷款'))
+    ax.plot(months, [v / 10000 for v in savings_list],
+            linewidth=2.2, color='#2ECC71', label=_cn('累计可支配收入'))
 
-    for i, d in enumerate(chart_data):
-        months = d['months']
-        rp = d['rp']
-        savings = d['savings']
-        years = d['years']
-        net = [s - r for s, r in zip(savings, rp)]
-        ax.plot(months, net, linewidth=1.8, color=colors[i % len(colors)],
-                label=f'{years}年贷款')
-
+    # 目标年限标记
     target_month = target_years * 12
-    ax.axvline(x=target_month, color='#F1C40F', linestyle='--', linewidth=1.5,
-               label=f'{target_years}年目标线', zorder=3)
-    ax.axhline(y=0, color='#95A5A6', linestyle=':', linewidth=1, alpha=0.7)
+    if target_month <= months[-1]:
+        ax.axvline(x=target_month, color='#F1C40F', linestyle='--',
+                   linewidth=1.5, label=_cn(f'{target_years}年目标线'), zorder=3)
 
-    ax.set_xlabel('月份', fontsize=10, color='#ECF0F1')
-    ax.set_ylabel('金额 (万元)', fontsize=10, color='#ECF0F1')
-    ax.set_title('各年限净资金变化趋势 (存款 - 剩余贷款)', fontsize=11,
-                 color='#ECF0F1', pad=10)
+    ax.set_xlabel(_cn('月份'), fontsize=10, color='#ECF0F1')
+    ax.set_ylabel(_cn('金额 (万元)'), fontsize=10, color='#ECF0F1')
+    ax.set_title(_cn('剩余贷款 vs 累计可支配收入 (30年贷款)'),
+                 fontsize=12, color='#ECF0F1', pad=10)
 
-    ax.yaxis.set_major_formatter(
-        matplotlib.ticker.FuncFormatter(lambda x, _: f'{x / 10000:.0f}'))
-    ax.legend(fontsize=8, loc='upper left', framealpha=0.8, facecolor='#34495E',
-              edgecolor='#7F8C8D', labelcolor='#ECF0F1')
+    ax.legend(fontsize=9, loc='center right', framealpha=0.8,
+              facecolor='#34495E', edgecolor='#7F8C8D', labelcolor='#ECF0F1')
     ax.grid(True, alpha=0.2, color='#7F8C8D')
     ax.tick_params(colors='#BDC3C7')
 
@@ -128,17 +146,14 @@ def calculate_mortgage(event=None):
             tree.delete(item)
 
         loan_years_list = [10, 15, 20, 25, 30]
-        chart_data = []
 
         for years in loan_years_list:
             if mode == "按月供":
                 r = calc_by_monthly_payment(income, expenses, cash_pmt, cpf_pmt,
                                             rate, dp_ratio, years, target_years)
-                loan_amount = r['loan_amount']
             else:
                 r = calc_by_house_price(income, expenses, house_price_for_calc,
                                         rate, dp_ratio, years, cpf_pmt, target_years)
-                loan_amount = r['loan_amount']
 
             tree.insert("", tk.END, values=(
                 f"{years} 年",
@@ -150,19 +165,21 @@ def calculate_mortgage(event=None):
                 r['remark'],
             ), tags=(r['tag'],))
 
-            # 收集图表数据
-            monthly_rate = rate / 100 / 12
-            total_months = years * 12
-            timeline = simulate_payoff(loan_amount, monthly_rate, total_months,
-                                       r['raw_savings'])
-            chart_data.append({
-                'years': years,
-                'months': timeline['months'],
-                'rp': timeline['remaining_principal'],
-                'savings': timeline['cumulative_savings'],
-            })
+        # --- 图表：30年贷款的剩余贷款 vs 累计可支配收入 ---
+        chart_years = 30
+        if mode == "按月供":
+            chart_r = calc_by_monthly_payment(income, expenses, cash_pmt, cpf_pmt,
+                                              rate, dp_ratio, chart_years, target_years)
+        else:
+            chart_r = calc_by_house_price(income, expenses, house_price_for_calc,
+                                          rate, dp_ratio, chart_years, cpf_pmt, target_years)
 
-        update_chart(chart_data, target_years)
+        monthly_rate = rate / 100 / 12
+        total_months = chart_years * 12
+        timeline = simulate_payoff(chart_r['loan_amount'], monthly_rate, total_months,
+                                   chart_r['raw_savings'])
+        update_chart(timeline['months'], timeline['remaining_principal'],
+                     timeline['cumulative_savings'], target_years)
 
     except ValueError:
         messagebox.showerror("输入错误", "请输入有效的数字！")
@@ -185,11 +202,11 @@ frame_guide = ttk.LabelFrame(root, text=" 使用指引 ", padding=(10, 8))
 frame_guide.pack(fill="x", pady=(0, 10))
 
 guide_text = (
-    "① 填写左侧财务参数（月薪、开销、公积金、利率、首付比例）\n"
+    "① 填写财务参数（月薪、开销、公积金、利率、首付比例）\n"
     "② 选择「目标结清年限」，程序自动反推该年限刚好结清的房价\n"
     "③ 「按月供」模式：输入现金月供，表格展示不同贷款年限的测算结果\n"
     "④ 「按房价」模式：输入目标房价（万元），表格展示不同年限的月供与判定\n"
-    "⑤ 下方图表展示各年限下「累计存款 - 剩余贷款」的净资金变化趋势"
+    "⑤ 下方图表展示 30 年贷款下「剩余贷款」与「累计可支配收入」的变化趋势"
 )
 lbl_guide = tk.Label(frame_guide, text=guide_text, font=("Arial", 9),
                      justify="left", fg="#2C3E50", anchor="w")
@@ -257,7 +274,7 @@ tree = ttk.Treeview(root, columns=columns, show="headings", height=5)
 tree.pack(fill="x", pady=(0, 10))
 
 headers = ["贷款年限", "房屋总价", "初始贷款", "月供",
-           f"目标年末剩余本金", "结清判定", "备注"]
+           "目标年末剩余本金", "结清判定", "备注"]
 widths = [70, 85, 85, 80, 120, 110, 240]
 for col, text, width in zip(columns, headers, widths):
     tree.heading(col, text=text)
@@ -268,10 +285,6 @@ tree.tag_configure('perfect', foreground='purple', font=("Arial", 10, "bold"))
 tree.tag_configure('fail', foreground='red')
 
 # --- matplotlib 图表 ---
-figure = Figure(figsize=(10, 3.2), dpi=100, facecolor='#2C3E50')
-ax = figure.add_subplot(111)
-ax.set_facecolor('#34495E')
-
 canvas = FigureCanvasTkAgg(figure, master=root)
 canvas.get_tk_widget().pack(fill="both", expand=True)
 
