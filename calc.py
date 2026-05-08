@@ -1,6 +1,6 @@
 """
 房贷计算核心逻辑 — 纯函数，无UI依赖
-包含：标准等额本息、逐月模拟、10年结清判定、20年完美卡点反推房价
+包含：标准等额本息、逐月模拟、结清判定、完美卡点反推房价
 """
 
 
@@ -22,10 +22,7 @@ def loan_from_payment(total_pmt, monthly_rate, total_months):
 
 
 def simulate_remaining_principal(loan_amount, monthly_rate, total_months, elapsed_months):
-    """
-    逐月模拟：计算 elapsed_months 个月后的剩余本金。
-    逐月摊销，精确到分。
-    """
+    """逐月模拟：计算 elapsed_months 个月后的剩余本金。"""
     if elapsed_months <= 0:
         return loan_amount
     if elapsed_months >= total_months:
@@ -44,23 +41,60 @@ def simulate_remaining_principal(loan_amount, monthly_rate, total_months, elapse
     return max(balance, 0.0)
 
 
-def judge_10year_payoff(income, expenses, cash_pmt, loan_amount, monthly_rate, total_months):
+def simulate_payoff(loan_amount, monthly_rate, total_months, raw_savings):
     """
-    10年结清判定 — 逐月模拟。
+    逐月模拟完整还款过程，返回逐月时间线数据（用于绘图）。
 
-    逐月摊销120个月，同时累计闲钱存款，最后比较存款与剩余本金。
+    返回 dict：
+        months              月份列表 [0, 1, 2, ...]
+        remaining_principal  每月剩余本金列表
+        cumulative_savings   每月累计存款列表
+    """
+    pmt = monthly_payment(loan_amount, monthly_rate, total_months)
+    balance = loan_amount
+    savings = 0.0
+
+    months = [0]
+    rp_list = [balance]
+    savings_list = [0.0]
+
+    for month in range(1, total_months + 1):
+        if balance > 0:
+            interest = balance * monthly_rate
+            principal = pmt - interest
+            balance -= principal
+        balance = max(balance, 0.0)
+        savings += raw_savings
+
+        months.append(month)
+        rp_list.append(balance)
+        savings_list.append(savings)
+
+    return {
+        'months': months,
+        'remaining_principal': rp_list,
+        'cumulative_savings': savings_list,
+    }
+
+
+def judge_payoff(income, expenses, cash_pmt, loan_amount, monthly_rate,
+                 total_months, target_years=10):
+    """
+    结清判定 — 逐月模拟。
+
+    逐月摊销 target_years 年，同时累计闲钱存款，最后比较存款与剩余本金。
 
     cash_pmt: 用户实际现金支出的月供（不含公积金部分）
 
     返回 dict：
-        remaining_principal  第10年末剩余本金
+        remaining_principal  目标年末剩余本金
         raw_savings          每月闲钱（收入-开销-现金月供）
-        savings_10_years     10年累计闲钱
+        savings_target       目标年累计闲钱
         gap                  闲钱 vs 剩余本金的差值
         status               判定文字
         tag                  'success' | 'perfect' | 'fail'
     """
-    elapsed_months = 120
+    elapsed_months = target_years * 12
 
     # 闲钱 = 收入 - 开销 - 现金月供
     raw_savings = income - expenses - cash_pmt
@@ -69,35 +103,33 @@ def judge_10year_payoff(income, expenses, cash_pmt, loan_amount, monthly_rate, t
         return {
             'remaining_principal': 0,
             'raw_savings': raw_savings,
-            'savings_10_years': 0,
+            'savings_target': 0,
             'gap': raw_savings,
             'status': '❌ 月供超出收入',
             'remark': f'月供{cash_pmt:.0f} 超出可用{(income - expenses):.0f}',
             'tag': 'fail',
         }
 
-    # --- 逐月模拟120个月 ---
+    # --- 逐月模拟 ---
     pmt = monthly_payment(loan_amount, monthly_rate, total_months)
     balance = loan_amount
-    total_interest = 0.0
 
-    for month in range(elapsed_months):
+    for _ in range(elapsed_months):
         if balance <= 0:
             balance = 0.0
             break
         interest = balance * monthly_rate
-        total_interest += interest
         principal = pmt - interest
         balance -= principal
 
     rp = max(balance, 0.0)
 
-    # 10年累计闲钱（纯存款，无额外月供）
-    savings_10_years = raw_savings * 120
+    # 累计闲钱
+    savings_target = raw_savings * elapsed_months
 
-    gap = savings_10_years - rp
+    gap = savings_target - rp
 
-    savings_info = f'闲钱{raw_savings:.0f}/月 累计{savings_10_years / 10000:.1f}万'
+    savings_info = f'闲钱{raw_savings:.0f}/月 累计{savings_target / 10000:.1f}万'
 
     if 0 <= gap <= 50000:
         status = '🌟 完美卡点'
@@ -115,7 +147,7 @@ def judge_10year_payoff(income, expenses, cash_pmt, loan_amount, monthly_rate, t
     return {
         'remaining_principal': rp,
         'raw_savings': raw_savings,
-        'savings_10_years': savings_10_years,
+        'savings_target': savings_target,
         'gap': gap,
         'status': status,
         'remark': remark,
@@ -123,7 +155,8 @@ def judge_10year_payoff(income, expenses, cash_pmt, loan_amount, monthly_rate, t
     }
 
 
-def calc_by_monthly_payment(income, expenses, cash_pmt, cpf_pmt, rate, dp_ratio, years):
+def calc_by_monthly_payment(income, expenses, cash_pmt, cpf_pmt, rate, dp_ratio,
+                            years, target_years=10):
     """按月供模式：给定月供，反推贷款额和房价"""
     monthly_rate = rate / 100 / 12
     total_months = years * 12
@@ -132,8 +165,8 @@ def calc_by_monthly_payment(income, expenses, cash_pmt, cpf_pmt, rate, dp_ratio,
     loan_amount = loan_from_payment(total_pmt, monthly_rate, total_months)
     house_price = loan_amount / (1 - dp_ratio / 100)
 
-    result = judge_10year_payoff(income, expenses, cash_pmt, loan_amount,
-                                 monthly_rate, total_months)
+    result = judge_payoff(income, expenses, cash_pmt, loan_amount,
+                          monthly_rate, total_months, target_years)
     result.update({
         'years': years,
         'house_price': house_price,
@@ -144,7 +177,7 @@ def calc_by_monthly_payment(income, expenses, cash_pmt, cpf_pmt, rate, dp_ratio,
 
 
 def calc_by_house_price(income, expenses, house_price, rate, dp_ratio,
-                        years, cpf_pmt=0):
+                        years, cpf_pmt=0, target_years=10):
     """
     按房价模式：给定房价，正算月供。
 
@@ -160,8 +193,8 @@ def calc_by_house_price(income, expenses, house_price, rate, dp_ratio,
     # 现金月供 = 总月供 - 公积金抵扣
     cash_pmt = max(total_pmt - cpf_pmt, 0)
 
-    result = judge_10year_payoff(income, expenses, cash_pmt, loan_amount,
-                                 monthly_rate, total_months)
+    result = judge_payoff(income, expenses, cash_pmt, loan_amount,
+                          monthly_rate, total_months, target_years)
     result.update({
         'years': years,
         'house_price': house_price,
@@ -174,15 +207,17 @@ def calc_by_house_price(income, expenses, house_price, rate, dp_ratio,
 def find_perfect_house_price(income, expenses, cpf_pmt, rate, dp_ratio,
                              target_years=20):
     """
-    二分搜索：找到使 target_years 贷款"刚好一点不剩"的房屋总价。
+    二分搜索：找到 target_years 年刚好结清的房屋总价。
+    内部固定使用30年贷款来搜索，target_years 仅用于结清判定。
     目标 = gap ≈ 0（闲钱刚好覆盖剩余本金，不多不少）
 
     返回 (house_price, gap) 或 (None, None) 表示无法找到。
     """
+    search_loan_years = 30  # 固定用30年贷款搜索
 
     def gap_at_price(price):
         r = calc_by_house_price(income, expenses, price, rate, dp_ratio,
-                                target_years, cpf_pmt)
+                                search_loan_years, cpf_pmt, target_years)
         return r['gap']
 
     # 验证可行性：房价极小时 gap 应 > 0
